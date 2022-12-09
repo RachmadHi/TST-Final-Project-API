@@ -11,6 +11,7 @@ from .database import engine, SessionLocal
 from sqlalchemy.orm import Session
 from .auth.jwt_handler import signJSONWebToken
 from .auth.jwt_bearer import JSONWebTokenBearer
+from multipart import *
 
 app = FastAPI()
 
@@ -240,12 +241,18 @@ async def analisis_data_penjualan(db : Session = Depends(get_db)):
     return item_analisis_penjualan
 
 @app.post("/user/signup", tags=["User"])
-def user_signup(user : UserSchema = Body(default=None)):
+def user_signup(email : str = Form(default=None), password : str = Form(default=None)):
+    user = UserSchema()
+    user.email = email
+    user.password = password
     users.append(user)
     return signJSONWebToken(user.email)
 
 @app.post("/user/login", tags=["User"])
-def user_login(user : UserLoginSchema = Body(default=None)):
+def user_login(email : str = Form(default=None), password : str = Form(default=None)):
+    user = UserLoginSchema()
+    user.email = email
+    user.password = password
     if check_user(user):
         return signJSONWebToken(user.email)
     else :
