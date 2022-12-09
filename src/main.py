@@ -6,11 +6,11 @@ from fastapi import FastAPI, Depends, HTTPException, Body, Form
 from requests_html import HTMLSession
 from pydantic import BaseModel, Field
 import uvicorn
-from models import Product_data, Base
-from database import engine, SessionLocal
+from .models import Product_data, Base
+from .database import engine, SessionLocal
 from sqlalchemy.orm import Session
-from auth.jwt_handler import signJSONWebToken
-from auth.jwt_bearer import JSONWebTokenBearer
+from .auth.jwt_handler import signJSONWebToken
+from .auth.jwt_bearer import JSONWebTokenBearer
 
 app = FastAPI()
 
@@ -58,25 +58,23 @@ def check_user(data : UserLoginSchema):
 productlist = []
 users = []
 
-# buat authorisasi dependencies=[Depends(JSONWebTokenBearer())]
-
-@app.get("/",  tags=["Default"])
+@app.get("/", tags=["Default"])
 def root() :
     return ("Analisis Penjualan Toko Online")
 
-@app.get("/read-data",  tags=["Read Data"])
+@app.get("/read-data",  dependencies=[Depends(JSONWebTokenBearer())], tags=["Read Data"])
 def read_data(db: Session = Depends(get_db)) :
     try :
         return db.query(Product_data).all()
     except :
         return ("Tidak Ada Data!")
  
-@app.get("/read-data/{id}",  tags=["Read Data"])
+@app.get("/read-data/{id}", dependencies=[Depends(JSONWebTokenBearer())], tags=["Read Data"])
 def read_data(id : int, db: Session = Depends(get_db)) :
     return db.query(Product_data).filter(Product_data.id == id).first()
 
 # Mengambil data dari salah satu toko di tokopedia
-@app.get("/ambil-data",  tags=["Ambil Data"])
+@app.get("/ambil-data",  dependencies=[Depends(JSONWebTokenBearer())], tags=["Ambil Data"])
 async def get_data(link : str, db: Session = Depends(get_db)) :
     def parse_price(price_raw):
         price = ""
@@ -137,12 +135,12 @@ async def get_data(link : str, db: Session = Depends(get_db)) :
 
     return productlist
 
-@app.put("/update-data-penjualan")
+@app.put("/update-data-penjualan", dependencies=[Depends(JSONWebTokenBearer())], tags=["Update Data"])
 async def update_data(link : str, db : Session = Depends(get_db)):
     delete_data_penjualan(db)
-    get_data(link,db)
+    get_data(link, db)
 
-@app.delete("/delete-all-data-penjualan", tags=["Delete Data"])
+@app.delete("/delete-all-data-penjualan", dependencies=[Depends(JSONWebTokenBearer())], tags=["Delete Data"])
 async def delete_data_penjualan(db : Session = Depends(get_db)):
     for i in range (1, len(db.query(Product_data).all())+1):
         product_data_model = Product_data()
@@ -153,7 +151,7 @@ async def delete_data_penjualan(db : Session = Depends(get_db)):
     db.commit()
     return ("Semua data berhasil dihapus.")
 
-@app.delete("/delete-data-penjualan/{id}", tags=["Delete Data"])
+@app.delete("/delete-data-penjualan/{id}", dependencies=[Depends(JSONWebTokenBearer())], tags=["Delete Data"])
 async def delete_data_penjualan(id : int, db : Session = Depends(get_db)):
     product_data_model = Product_data()
     product_data_model = db.query(Product_data).filter(Product_data.id == id).first()
@@ -166,7 +164,7 @@ async def delete_data_penjualan(id : int, db : Session = Depends(get_db)):
     db.query(Product_data).filter(Product_data.id == id).delete()
     db.commit()
 
-@app.get("/analisis-penjualan", tags=["Analisis Data"])
+@app.get("/analisis-penjualan", dependencies=[Depends(JSONWebTokenBearer())],  tags=["Analisis Data"])
 async def analisis_data_penjualan(db : Session = Depends(get_db)):
 
     count_data = len(db.query(Product_data).all())
@@ -185,7 +183,25 @@ async def analisis_data_penjualan(db : Session = Depends(get_db)):
             product_data_model = db.query(Product_data).filter(Product_data.id == i).first()
             sum += product_data_model.terjual
         
-        return sum        
+        return sum   
+
+    def mean_penjualan() :
+        sum = 0
+        for i in range (1, count_data):
+            product_data_model = db.query(Product_data).filter(Product_data.id == i).first()
+            sum += product_data_model.harga * product_data_model.terjual
+        
+        mean = sum/count_data
+        return mean 
+
+    def mean_produk_terjual() :
+        sum = 0
+        for i in range (1, count_data):
+            product_data_model = db.query(Product_data).filter(Product_data.id == i).first()
+            sum += product_data_model.terjual
+        
+        mean = sum/count_data
+        return mean 
 
     def produk_terlaris():
         produk_terlaris = db.query(Product_data).filter(Product_data.id == 1).first()
@@ -196,10 +212,29 @@ async def analisis_data_penjualan(db : Session = Depends(get_db)):
 
         return produk_terlaris.nama
 
+    def total_penjualan_produk_terlaris():
+        produk_terlaris = db.query(Product_data).filter(Product_data.id == 1).first()
+        for i in range (2, count_data):
+            product_data_model = db.query(Product_data).filter(Product_data.id == i).first()
+            if product_data_model.terjual >= produk_terlaris.terjual :
+                produk_terlaris = product_data_model
+
+        return produk_terlaris.terjual
+    
+    def proyeksi_penjualan() :
+        proyeksi_penjualan = (mean_penjualan() * mean_produk_terjual())/12
+        return proyeksi_penjualan
+
     item_analisis_penjualan = {
         "Total Penjualan" : "Rp"+ str(total_penjualan()),
+        "Rata-rata Penjualan" : "Rp" + str(mean_penjualan()),
         "Total Produk Terjual" : total_produk_terjual(),
+        "Rata-rata Produk Terjual" : round(mean_produk_terjual()),
+        "------------------------------------------" : "------------------------------------------",
         "Produk Terlaris" : produk_terlaris(),
+        "Total Penjualan Produk Terlaris" : total_penjualan_produk_terlaris(),
+        "------------------------------------------" : "------------------------------------------",
+        "Proyeksi Penjualan Bulan Depan" : "Rp" + str(round(proyeksi_penjualan(), 3)),
     }
 
     return item_analisis_penjualan
