@@ -23,21 +23,12 @@ def get_db():
     finally:
         db.close()
 
-class Product_data(BaseModel):
-    nama : str
-    harga : int
-    terjual : int
-    rating : float
-
 class UserSchema(BaseModel):
-    username : str = Field(default = None)
     email : str = Field(default = None)
     password : str = Field(default = None)
-
     class Config:
         the_schema = {
             "example" : {
-                "name" : "User",
                 "email" : "user123@gmail.com",
                 "password" : "12345678"
         
@@ -67,40 +58,39 @@ def check_user(data : UserLoginSchema):
 productlist = []
 users = []
 
-@app.get("/", dependencies=[Depends(JSONWebTokenBearer())], tags=["Default"])
+# buat authorisasi dependencies=[Depends(JSONWebTokenBearer())]
+
+@app.get("/",  tags=["Default"])
 def root() :
     return ("Analisis Penjualan Toko Online")
 
-@app.get("/read-data", dependencies=[Depends(JSONWebTokenBearer())], tags=["Read Data"])
+@app.get("/read-data",  tags=["Read Data"])
 def read_data(db: Session = Depends(get_db)) :
-    return db.query(Product_data).all()
+    try :
+        return db.query(Product_data).all()
+    except :
+        return ("Tidak Ada Data!")
  
-@app.get("/read-data/{id}", dependencies=[Depends(JSONWebTokenBearer())], tags=["Read Data"])
+@app.get("/read-data/{id}",  tags=["Read Data"])
 def read_data(id : int, db: Session = Depends(get_db)) :
     return db.query(Product_data).filter(Product_data.id == id).first()
 
 # Mengambil data dari salah satu toko di tokopedia
-@app.get("/ambil-data", dependencies=[Depends(JSONWebTokenBearer())],  tags=["Ambil Data"])
+@app.get("/ambil-data",  tags=["Ambil Data"])
 async def get_data(link : str, db: Session = Depends(get_db)) :
     def parse_price(price_raw):
-        if price_raw[5]==("."):
-            return price_raw[3:5]+price_raw[6:9]
-        elif price_raw[4] == ("."):
-            return price_raw[3]+price_raw[5:8]
-        else :
-            return price_raw[3:6]+price_raw[7:10]
-    
+        price = ""
+        for i in range (0, len(price_raw)):
+            if price_raw[i].isdigit() :
+                price += price_raw[i]
+        return price
+
     def parse_terjual(terjual_raw):
-        if len(terjual_raw) >= 11 :
-            if terjual_raw[9] == "r" :
-                return terjual_raw[8] * 1000
-            elif terjual_raw[10] == "+" :
-               return terjual_raw[8:10]
-            elif terjual_raw[11] == "+" :
-               return terjual_raw[8:11]
-            return terjual_raw[8:]
-        else :
-            return terjual_raw[8:]
+        terjual = ""
+        for i in range (0, len(terjual_raw)):
+            if terjual_raw[i].isdigit() :
+                terjual += terjual_raw[i]
+        return terjual
     
     url = f"{link}"
     print(url)
@@ -108,21 +98,22 @@ async def get_data(link : str, db: Session = Depends(get_db)) :
     r = session.get(url)
 
     product = r.html.find('div.css-1sn1xa2')
-
     for p in product:
         Nama = p.find('div.prd_link-product-name.css-svipq6', first = True).text.strip()
         Price_raw = p.find('div.prd_link-product-price.css-1ksb19c', first = True).text.strip()
 
-        if p.find('span.prd_label-integrity.css-1duhs3e', first = True).text.strip() is not None :
+        try :
             Terjual_raw = p.find('span.prd_label-integrity.css-1duhs3e', first = True).text.strip()
-        else :
-            Terjual_raw = 0
+        except :
+            Terjual_raw = "Terjual 0"
+            print ("Data Penjualan Tidak Ditemukan")
 
-        if p.find('span.prd_rating-average-text.css-t70v7i', first = True).text.strip() is not None :
+        try :
             Rating = p.find('span.prd_rating-average-text.css-t70v7i', first = True).text.strip()
-        else :
-            Rating = 0.0
-        
+        except :
+            Rating = "0.0"
+            print ("Data Rating Tidak Ditemukan")
+            
         Price = parse_price(Price_raw)
         Terjual = parse_terjual(Terjual_raw)
 
@@ -134,39 +125,48 @@ async def get_data(link : str, db: Session = Depends(get_db)) :
         }
         productlist.append(item)
 
-    product_data_model = Product_data()
     for item in productlist:
         product_data_model = Product_data()
-        product_data_model.nama = str(Nama)
-        product_data_model.harga= Price
-        product_data_model.terjual = Terjual
-        product_data_model.rating = Rating
+        product_data_model.nama = item['Nama']
+        product_data_model.harga= item['Harga']
+        product_data_model.terjual = item['Terjual']
+        product_data_model.rating = item['Rating']
         
         db.add(product_data_model)
         db.commit()
 
     return productlist
 
-# @app.put("/update-data-penjualan")
-# async def update_data():
-    #for 
+@app.put("/update-data-penjualan")
+async def update_data(link : str, db : Session = Depends(get_db)):
+    delete_data_penjualan(db)
+    get_data(link,db)
 
-
-# @app.delete("delete-data-penjualan/{id}", dependencies=[Depends(JSONWebTokenBearer())], tags=["Delete Data"])
-# async def delete_data_penjualan(id : int, db : Session = Depends(get_db)):
-
-#     product_data_model = db.query(Product_data).filter(Product_data.id == id).first()
-#     print(product_data_model)
-#     if product_data_model is None:
-#         raise HTTPException(
-#             status_code=404,
-#             detail=f"ID {id} : Does not exist"
-#         )
+@app.delete("/delete-all-data-penjualan", tags=["Delete Data"])
+async def delete_data_penjualan(db : Session = Depends(get_db)):
+    for i in range (1, len(db.query(Product_data).all())+1):
+        product_data_model = Product_data()
+        product_data_model = db.query(Product_data).filter(Product_data.id == i).first()
+        if product_data_model is not None:
+            db.query(Product_data).filter(Product_data.id == product_data_model.id).delete()
     
-#     db.query(Product_data).filter(Product_data.id == id).delete()
-#     db.commit()
+    db.commit()
+    return ("Semua data berhasil dihapus.")
 
-@app.get("/analisis-penjualan", dependencies=[Depends(JSONWebTokenBearer())], tags=["Analisis Data"])
+@app.delete("/delete-data-penjualan/{id}", tags=["Delete Data"])
+async def delete_data_penjualan(id : int, db : Session = Depends(get_db)):
+    product_data_model = Product_data()
+    product_data_model = db.query(Product_data).filter(Product_data.id == id).first()
+    if product_data_model is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"ID {id} : Does not exist"
+        )
+    
+    db.query(Product_data).filter(Product_data.id == id).delete()
+    db.commit()
+
+@app.get("/analisis-penjualan", tags=["Analisis Data"])
 async def analisis_data_penjualan(db : Session = Depends(get_db)):
 
     count_data = len(db.query(Product_data).all())
@@ -197,7 +197,7 @@ async def analisis_data_penjualan(db : Session = Depends(get_db)):
         return produk_terlaris.nama
 
     item_analisis_penjualan = {
-        "Total Penjualan" : total_penjualan(),
+        "Total Penjualan" : "Rp"+ str(total_penjualan()),
         "Total Produk Terjual" : total_produk_terjual(),
         "Produk Terlaris" : produk_terlaris(),
     }
